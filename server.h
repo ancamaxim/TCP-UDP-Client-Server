@@ -11,6 +11,7 @@ struct client {
     string id;
     int sockfd;
     int is_active;
+    unordered_map<string, bool> subs;
 
     client(string id, int sockfd, int is_active):
         id(id), sockfd(sockfd), is_active(is_active) {}

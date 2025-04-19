@@ -3,7 +3,8 @@
 using namespace std;
 
 unordered_map<string, client> database;
-unordered_map<int, string> sock_id_map;
+
+unordered_map<int, client> sock_id_map;
 
 vector<int> is_active;
 
@@ -15,8 +16,37 @@ void close_all_connections(pollfd *poll_fds, int num_sockets) {
 void close_client(pollfd *poll_fds, int i) {
 	shutdown(poll_fds[i].fd, SHUT_RDWR);
 	close(poll_fds[i].fd);
-	database[sock_id_map[poll_fds[i].fd]].is_active = 0;
+	database[sock_id_map[poll_fds[i].fd].id].is_active = 0;
+	sock_id_map.erase(poll_fds[i].fd);
 	is_active[i] = 0;
+}
+
+bool match_topic(vector<string> s, vector<string> p) {
+	int n = s.size(), m = p.size();
+	vector<vector<bool>> dp(n + 1, vector<bool>(m + 1, false));
+
+	dp[0][0] = true;
+	for (int i = 0; i <= n; i++)
+		for (int j = 1; j <= m; j++)
+			if (i > 0 && (s[i - 1] == p[j - 1] || p[j - 1] == "+"))
+				dp[i][j] = dp[i - 1][j - 1];
+			else if(p[j - 1] == "*")
+				dp[i][j] = dp[i][j - 1] || (i > 0 && dp[i - 1][j]);
+	return dp[n][m];
+}
+
+void handle_subscription(TCP_subscription tcp_sub, int sockfd) {
+	client& c = sock_id_map[sockfd];
+	string topic = string(tcp_sub.topic);
+
+	if (tcp_sub.subscribe == 1) {
+		/* Register subscription for corresponding client */
+		c.subs[topic] = true;
+	} else {
+		/* Unsubscribe if topic exists */
+		if (c.subs.find(topic) != c.subs.end())
+			c.subs[topic] = false;
+	}
 }
 
 void run_server(int listenTCP, int sock_UDP) {
@@ -78,17 +108,18 @@ void run_server(int listenTCP, int sock_UDP) {
 					num_sockets++;
 
 					/* Register client into database */
-                    database[id] = client(id, newsockfd, 1);
-					sock_id_map[newsockfd] = id;
+                    database[id] = sock_id_map[newsockfd] = client(id, newsockfd, 1);
 					printf("New client %s connected from %d:%d.\n", buf,
 							inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
 				} else {
-					client c = database[id];
+					client& c = database[id];
 
 					if (!c.is_active) {
 						/* Client has been registered before, but is not active */
 						c.is_active = 1;
+						sock_id_map.erase(c.sockfd);
 						c.sockfd = newsockfd;
+						sock_id_map[newsockfd] = c;
 					} else {
 						/* Client already exists in database, send error */
 						printf("Client %s already connected.\n", buf);
@@ -126,13 +157,13 @@ void run_server(int listenTCP, int sock_UDP) {
 				DIE(rc < 0, "recv");
 
 				if (rc == 0) {
-					printf("Client %s disconnected.\n", sock_id_map[poll_fds[i].fd]);
+					printf("Client %s disconnected.\n", sock_id_map[poll_fds[i].fd].id);
                     
                     /* Delete socket */
 					close_client(poll_fds, i);
 				} else {
 					/* Valid TCP message: subscribe / unsubscribe */
-					
+					handle_subscription(tcp_sub, poll_fds[i].fd);
 				}
 			}
 		}

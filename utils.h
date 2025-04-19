@@ -86,6 +86,6 @@ int send_all(int sockfd, void *buff, size_t len);
  */
 int recv_all(int sockfd, void *buff, size_t len);
 
-const char* dataTypeToString(DATA_TYPE type);
+const char* data_type_to_string(DATA_TYPE type);
 
 #endif

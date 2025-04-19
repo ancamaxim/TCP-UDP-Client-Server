@@ -22,7 +22,7 @@ void print_notification(TCP_notification tcp_notif) {
     char *payload = tcp_notif.pkt.payload;
 
     printf("%s:%d - %s - %s - ", tcp_notif.ip_udp, tcp_notif.port_udp,
-            tcp_notif.pkt.topic, dataTypeToString(tcp_notif.pkt.data_type));
+            tcp_notif.pkt.topic, data_type_to_string(tcp_notif.pkt.data_type));
 
     if (tcp_notif.pkt.data_type == INT) {
         int nr = 0;
@@ -37,7 +37,8 @@ void print_notification(TCP_notification tcp_notif) {
     } else if (tcp_notif.pkt.data_type == SHORT_REAL) {
         uint16_t nr = htons(*(uint16_t *) tcp_notif.pkt.payload);
 
-        printf("%f\n", nr * 1.0 / 100);
+        printf("%.*f\n", 2, nr * 1.0 / 100);
+
     } else if (tcp_notif.pkt.data_type == FLOAT) {
         int nr = 0;
         char sign = *(tcp_notif.pkt.payload);
@@ -50,7 +51,8 @@ void print_notification(TCP_notification tcp_notif) {
         if (sign == 1)
             nr = ~nr + 1;
 
-        printf("%f\n", nr * 1.0 / p);
+        printf("%.*f\n", p, nr * 1.0 / p);
+
     } else if (tcp_notif.pkt.data_type == STRING) {
         printf("%s\n", tcp_notif.pkt.payload);
     }
