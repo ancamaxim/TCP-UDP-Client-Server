@@ -2,7 +2,7 @@
 #define __SUBSCRIBER_H__
 
 #include "utils.h"
-
+#include <cmath>
 
 
 #endif

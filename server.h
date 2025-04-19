@@ -5,20 +5,15 @@
 #include <unordered_map>
 #include <vector>
 #include <string>
-
-struct TCP_packet {
-
-};
-
-struct UDP_packet {
-    char topic[50];
-    char data_type;
-    char content[1500];
-};
+#include <netinet/tcp.h>
 
 struct client {
-    char id[10];
+    string id;
     int sockfd;
+    int is_active;
+
+    client(string id, int sockfd, int is_active):
+        id(id), sockfd(sockfd), is_active(is_active) {}
 };
 
 #endif

@@ -2,34 +2,43 @@
 
 using namespace std;
 
-unordered_map<string, vector<string>> database;
+unordered_map<string, client> database;
+unordered_map<int, string> sock_id_map;
+
+vector<int> is_active;
 
 void close_all_connections(pollfd *poll_fds, int num_sockets) {
     for (int i = 1; i < num_sockets; ++i)
-        close(poll_fds[i].fd);
-    exit(0);
+		close_client(poll_fds, i);
 }
 
-void delete_client(pollfd *poll_fds, int i, int *num_sockets) {
-    for (int j = i; j < *num_sockets - 1; j++)
-        poll_fds[j] = poll_fds[j + 1];
-    --(*num_sockets);
-    // database.erase()
+void close_client(pollfd *poll_fds, int i) {
+	shutdown(poll_fds[i].fd, SHUT_RDWR);
+	close(poll_fds[i].fd);
+	database[sock_id_map[poll_fds[i].fd]].is_active = 0;
+	is_active[i] = 0;
 }
 
 void run_server(int listenTCP, int sock_UDP) {
-    TCP_packet tcp_pkt;
+    TCP_subscription tcp_sub;
+    TCP_notification tcp_notif;
     UDP_packet udp_pkt;
 
     char buf[MAX_TCP_MESSAGE];
     int num_sockets = 3, MAX_CONNECTIONS = 33, rc;
     pollfd *poll_fds;
 
+	memset(buf, 0, MAX_TCP_MESSAGE);
+    memset(&tcp_sub, 0, sizeof(tcp_sub));
+    memset(&tcp_notif, 0, sizeof(tcp_notif));
+
     poll_fds = (pollfd *) calloc(MAX_CONNECTIONS, sizeof(pollfd));
     DIE(poll_fds == NULL, "calloc() failed");
 
     rc = listen(listenTCP, MAX_CONNECTIONS);
     DIE(rc < 0, "listen");
+
+	is_active.resize(MAX_CONNECTIONS);
 
     poll_fds[0].fd = 0;
     poll_fds[0].fd = POLLIN;
@@ -38,13 +47,14 @@ void run_server(int listenTCP, int sock_UDP) {
     poll_fds[2].fd = listenTCP;
     poll_fds[2].events = POLLIN;
 
+	is_active[0] = is_active[1] = is_active[2] = 1;
+
     while (1) {
 		rc = poll(poll_fds, num_sockets, -1);
 		DIE(rc < 0, "poll");
 
-		for (int i = 0; i < num_sockets; i++)
-		{
-			if (!(poll_fds[i].revents & POLLIN))
+		for (int i = 0; i < num_sockets; i++) {
+			if (!(poll_fds[i].revents & POLLIN) || !is_active[i])
 				continue;
 			if (poll_fds[i].fd == listenTCP) {
 				/* Accept new connection */
@@ -54,50 +64,75 @@ void run_server(int listenTCP, int sock_UDP) {
                                 (struct sockaddr *)&cli_addr, &cli_len);
 				DIE(newsockfd < 0, "accept");
 
-                /* Add socket to poll */
-				poll_fds[num_sockets].fd = newsockfd;
-				poll_fds[num_sockets].events = POLLIN;
-				num_sockets++;
-
                 /* Receive client ID */
-                int rc = recv_all(poll_fds[i].fd, &buf, 10);
+                int rc = recv_all(poll_fds[i].fd, buf, 11);
                 DIE(rc < 0, "recv");
 
-                /* Register client into database */
-                if (database.find(string(buf)) == database.end()) {
-                    database[string(buf)] = vector<string>{};
-                } else {
-                    /* Client already exists in database, send error */
-                }
+				/* First ever time of registration */
+				string id = string(buf);
+                if (database.find(id) == database.end()) {
+					/* Add socket to poll */
+					poll_fds[num_sockets].fd = newsockfd;
+					poll_fds[num_sockets].events = POLLIN;
+					is_active[num_sockets] = 1;
+					num_sockets++;
 
-				printf("New client %s, connected from \n",
-					   inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port),
-					   newsockfd);
+					/* Register client into database */
+                    database[id] = client(id, newsockfd, 1);
+					sock_id_map[newsockfd] = id;
+					printf("New client %s connected from %d:%d.\n", buf,
+							inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
+				} else {
+					client c = database[id];
+
+					if (!c.is_active) {
+						/* Client has been registered before, but is not active */
+						c.is_active = 1;
+						c.sockfd = newsockfd;
+					} else {
+						/* Client already exists in database, send error */
+						printf("Client %s already connected.\n", buf);
+
+						memset(buf, 0, MAX_TCP_MESSAGE);
+						int rc = send_all(newsockfd, buf, sizeof(tcp_notif));
+						DIE(rc < 0, "send() error");
+
+						shutdown(newsockfd, SHUT_RDWR);
+						close(newsockfd);
+					}
+				}
             } else if (poll_fds[i].fd == sock_UDP) {
-                // info about 
+				/* Received UDP notification */
+				sockaddr from;
+				socklen_t addrlen;
+				int rc = recvfrom(sock_UDP, &udp_pkt, sizeof(udp_pkt), 0,
+							(struct sockaddr *) &from, &addrlen);
+				
+				/* Process notification */
+
+				/* Send notification using tcp_notif */
             } else if (poll_fds[i].fd == 0) {
-                // for exit command
+                /* In case of exit command, close all connections + server */
                 fgets(buf, sizeof(buf), stdin);
-                if (!strcmp(buf, "exit\n"))
+
+                if (!strcmp(buf, "exit\n")) {
                     close_all_connections(poll_fds, num_sockets);
+					free(poll_fds);
+					exit(0);
+				}
             } else {
-				int rc = recv_all(poll_fds[i].fd, &received_packet,
-								  sizeof(received_packet));
+				/* Received TCP message */
+				int rc = recv_all(poll_fds[i].fd, &tcp_sub, sizeof(tcp_sub));
 				DIE(rc < 0, "recv");
-				if (rc == 0)
-				{
-					printf("Socket-ul client %d a inchis conexiunea\n", i);
-					close(poll_fds[i].fd);
+
+				if (rc == 0) {
+					printf("Client %s disconnected.\n", sock_id_map[poll_fds[i].fd]);
                     
                     /* Delete socket */
-					delete_client()
+					close_client(poll_fds, i);
 				} else {
-					printf("S-a primit de la clientul de pe socketul %d mesajul: %s\n",
-						   poll_fds[i].fd, received_packet.message);
-					/* Send message to clients */
-					for (int j = 0; j < num_sockets; ++j)
-						if (poll_fds[j].fd != listenTCP && i != j)
-							send_all(poll_fds[j].fd, &received_packet, sizeof(received_packet));
+					/* Valid TCP message: subscribe / unsubscribe */
+					
 				}
 			}
 		}
@@ -135,10 +170,14 @@ int main(int argc, char *argv[])
     if (setsockopt(sock_UDP, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0)
         perror("setsockopt(SO_REUSEADDR) failed");
 
+	/* Disable Nagel's algorithm */
+	if (setsockopt(listenTCP, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(int)) < 0)
+		perror("setsockopt(TCP_NODELAY) failed");
+
 	memset(&serv_addr, 0, socket_len);
 	serv_addr.sin_family = AF_INET;
 	serv_addr.sin_port = htons(port);
-	rc = inet_pton(AF_INET, argv[1], &serv_addr.sin_addr.s_addr);
+	serv_addr.sin_addr.s_addr = INADDR_ANY;
 	DIE(rc <= 0, "inet_pton");
 
 	rc = bind(listenTCP, (const struct sockaddr *)&serv_addr, sizeof(serv_addr));

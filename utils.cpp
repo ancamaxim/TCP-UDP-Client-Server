@@ -27,4 +27,13 @@ int send_all(int sockfd, void *buffer, size_t len) {
 
     return bytes_sent;
 }
-  
+
+const char* dataTypeToString(DATA_TYPE type) {
+  switch (type) {
+      case INT: return "INT";
+      case SHORT_REAL: return "SHORT_REAL";
+      case FLOAT: return "FLOAT";
+      case STRING: return "STRING";
+      default: return "";
+  }
+}
