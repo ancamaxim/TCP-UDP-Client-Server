@@ -1,28 +1,16 @@
-SOURCES=server.cpp subscriber.cpp
-LIBRARY=nope
-INCPATHS=include
-LIBPATHS=.
-LDFLAGS=
-CFLAGS=-c -Wall -Werror -Wno-error=unused-variable
-CC=gcc
-CPPFLAGS=$(CFLAGS) -std=c++17
 CPP=g++
+CPPFLAGS=-Wall -Werror -Wno-error=unused-variable -std=c++23
 
-OBJECTS=$(SOURCES:.cpp=.o)
+all: server subscriber
 
-INCFLAGS=$(foreach TMP,$(INCPATHS),-I$(TMP))
-LIBFLAGS=$(foreach TMP,$(LIBPATHS),-L$(TMP))
+utils.o: utils.cpp
+	$(CPP) $(CPPFLAGS) -c utils.cpp -o utils.o
 
-all: $(SOURCES)
+server: server.cpp utils.o
+	$(CPP) $(CPPFLAGS) server.cpp utils.o -o $@
 
-server: server.o
-		$(CPP) $(LIBFLAGS) $(OBJECTS) $(LDFLAGS) -o $@
-
-subcriber: subscriber.o
-		$(CPP) $(LIBFLAGS) $(OBJECTS) $(LDFLAGS) -o $@
-
-%.o: %.cpp
-		$(CPP) $(INCFLAGS) $(CPPFLAGS) -fpic -c $< -o $@
+subscriber: subscriber.cpp utils.o
+	$(CPP) $(CPPFLAGS) subscriber.cpp utils.o -o $@
 
 clean:
-		rm -rf $(OBJECTS) $(BINARY) server subscriber
+	rm -rf utils.o server subscriber

@@ -19,8 +19,6 @@ void parse_tcp(TCP_subscription *tcp_pkt, char *buf) {
 
 void print_notification(TCP_notification tcp_notif) {
 
-    char *payload = tcp_notif.pkt.payload;
-
     printf("%s:%d - %s - %s - ", tcp_notif.ip_udp, tcp_notif.port_udp,
             tcp_notif.pkt.topic, data_type_to_string(tcp_notif.pkt.data_type));
 

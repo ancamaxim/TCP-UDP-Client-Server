@@ -6,14 +6,17 @@
 #include <vector>
 #include <string>
 #include <netinet/tcp.h>
+#include <cstdio>
+#include <sstream>
 
 struct client {
-    string id;
+    std::string id;
     int sockfd;
     int is_active;
-    unordered_map<string, bool> subs;
+    std::unordered_map<std::string, bool> subs;
 
-    client(string id, int sockfd, int is_active):
+    client() {};
+    client(std::string id, int sockfd, int is_active):
         id(id), sockfd(sockfd), is_active(is_active) {}
 };
 

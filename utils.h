@@ -24,18 +24,18 @@ struct TCP_subscription
 	char topic[50];
 };
 
-struct TCP_notification
-{
-	char ip_udp[33];
-	uint16_t port_udp;
-	UDP_packet pkt;
-};
-
 struct UDP_packet
 {
 	char topic[50];
 	DATA_TYPE data_type;
 	char payload[1500];
+};
+
+struct TCP_notification
+{
+	char ip_udp[33];
+	uint16_t port_udp;
+	UDP_packet pkt;
 };
 
 #define MAX_TCP_MESSAGE (max(sizeof(TCP_notification), sizeof(TCP_subscription)))
