@@ -60,7 +60,7 @@ vector<string> split(const string& text, char delim) {
 	return res;
 }
 
-void announce_clients(UDP_packet udp_pkt) {
+void announce_clients(UDP_packet udp_pkt, sockaddr_in addr) {
 	for (const auto& [sockfd, client] : sock_id_map) {
 		for (const auto& [sub, active] : client.subs) {
 			if (!active)
@@ -68,7 +68,13 @@ void announce_clients(UDP_packet udp_pkt) {
 			bool match = match_topic(split(sub, '/'), split(udp_pkt.topic, '/'));
 
 			if (match) {
-				int rc = send_all(sockfd, &udp_pkt, sizeof(udp_pkt));
+				TCP_notification tcp_notif;
+
+				strcpy(tcp_notif.ip_udp, inet_ntoa(addr.sin_addr));
+				tcp_notif.port_udp = ntohs(addr.sin_port);
+				tcp_notif.pkt = udp_pkt;
+
+				int rc = send_all(sockfd, &tcp_notif, sizeof(tcp_notif));
 				DIE(rc < 0, "send");
 			}
 		}
@@ -114,14 +120,14 @@ void run_server(int listenTCP, int sock_UDP) {
 				continue;
 			if (poll_fds[i].fd == listenTCP) {
 				/* Accept new connection */
-				struct sockaddr_in cli_addr;
+				sockaddr_in cli_addr;
 				socklen_t cli_len = sizeof(cli_addr);
 				const int newsockfd = accept(listenTCP, 
-                                (struct sockaddr *)&cli_addr, &cli_len);
+                                (sockaddr *)&cli_addr, &cli_len);
 				DIE(newsockfd < 0, "accept");
 
                 /* Receive client ID */
-                int rc = recv_all(poll_fds[i].fd, buf, 11);
+                int rc = recv_all(newsockfd, buf, 11);
                 DIE(rc < 0, "recv");
 
 				/* First ever time of registration */
@@ -146,6 +152,14 @@ void run_server(int listenTCP, int sock_UDP) {
 						sock_id_map.erase(c.sockfd);
 						c.sockfd = newsockfd;
 						sock_id_map[newsockfd] = c;
+						
+						poll_fds[num_sockets].fd = newsockfd;
+						poll_fds[num_sockets].events = POLLIN;
+						is_active[num_sockets] = 1;
+						num_sockets++;
+
+						printf("New client %s connected from %s:%d.\n", buf,
+							inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
 					} else {
 						/* Client already exists in database, send error */
 						printf("Client %s already connected.\n", buf);
@@ -160,14 +174,14 @@ void run_server(int listenTCP, int sock_UDP) {
 				}
             } else if (poll_fds[i].fd == sock_UDP) {
 				/* Received UDP notification */
-				sockaddr from;
+				sockaddr_in from;
 				socklen_t addrlen;
 				int rc = recvfrom(sock_UDP, &udp_pkt, sizeof(udp_pkt), 0,
-							(struct sockaddr *) &from, &addrlen);
+							(sockaddr *) &from, &addrlen);
 				DIE(rc < 0, "recvfrom");
 
 				/* Process notification */
-				announce_clients(udp_pkt);
+				announce_clients(udp_pkt, from);
             } else if (poll_fds[i].fd == 0) {
                 /* In case of exit command, close all connections + server */
                 fgets(buf, sizeof(buf), stdin);

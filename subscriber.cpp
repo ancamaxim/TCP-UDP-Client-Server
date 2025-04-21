@@ -5,13 +5,17 @@ using namespace std;
 
 void parse_tcp(TCP_subscription *tcp_pkt, char *buf) { 
     char *sub = strtok(buf, " ");
+    if (!sub)
+        exit(-1);
     char *topic = strtok(NULL, " ");
+    if (!topic)
+        exit(-1);
 
     strcpy(tcp_pkt->topic, topic);
     if (!strcmp(sub, "subscribe")) {
         tcp_pkt->subscribe = 1;
         printf("Subscribed to topic %s.\n", topic);
-    } else {
+    } else if (!strcmp(sub, "unsubscribe")) {
         tcp_pkt->subscribe = 0;
         printf("Unsubscribed to topic %s.\n", topic);
     }
@@ -24,35 +28,35 @@ void print_notification(TCP_notification tcp_notif) {
 
     if (tcp_notif.pkt.data_type == INT) {
         int nr = 0;
-        char sign = *(tcp_notif.pkt.payload);
+        unsigned char sign = *(unsigned char *)(tcp_notif.pkt.payload);
 
-        nr = htonl((uint32_t)*(tcp_notif.pkt.payload + 1));
+        nr = ntohl(*(uint32_t *)(tcp_notif.pkt.payload + 1));
 
         if (sign == 1)
             nr = ~nr + 1;
 
         printf("%d\n", nr);
     } else if (tcp_notif.pkt.data_type == SHORT_REAL) {
-        uint16_t nr = htons(*(uint16_t *) tcp_notif.pkt.payload);
+        uint16_t nr = ntohs(*(uint16_t *) tcp_notif.pkt.payload);
 
         printf("%.*f\n", 2, nr * 1.0 / 100);
 
     } else if (tcp_notif.pkt.data_type == FLOAT) {
         int nr = 0;
-        char sign = *(tcp_notif.pkt.payload);
-        uint8_t exp = *(tcp_notif.pkt.payload + 5);
-        int p = 1;
+        char sign = *(unsigned char *)(tcp_notif.pkt.payload);
+        uint8_t exp = *(unsigned char *)(tcp_notif.pkt.payload + 5);
+        long long p = 1;
 
-        nr = htonl((uint32_t)*(tcp_notif.pkt.payload + 1));
+        nr = ntohl(*(uint32_t *)(tcp_notif.pkt.payload + 1));
         p = pow(10, exp);
 
         if (sign == 1)
             nr = ~nr + 1;
 
-        printf("%.*f\n", p, nr * 1.0 / p);
+        printf("%.*f\n", exp, nr * 1.0 / p);
 
     } else if (tcp_notif.pkt.data_type == STRING) {
-        printf("%s\n", tcp_notif.pkt.payload);
+        printf("%.1500s\n", tcp_notif.pkt.payload);
     }
 }
 
@@ -137,7 +141,11 @@ int main(int argc, char *argv[])
 	rc = connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
 	DIE(rc < 0, "connect");
 
-    rc = send_all(sockfd, argv[1], 11);
+    char buf[11];
+
+    memset(buf, 0, 11);
+    strcpy(buf, argv[1]);
+    rc = send_all(sockfd, buf, 11);
     DIE(rc < 0, "send client_id failed");
 
 	run_client(sockfd);
