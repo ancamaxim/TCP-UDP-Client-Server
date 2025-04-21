@@ -21,24 +21,24 @@ enum DATA_TYPE : uint8_t {
 struct TCP_subscription
 {
 	int subscribe;
-	char topic[50];
+	char topic[51];
 };
 
 struct UDP_packet
 {
-	char topic[50];
+	char topic[51];
 	DATA_TYPE data_type;
-	char payload[1500];
+	char payload[1501];
 };
 
 struct TCP_notification
 {
-	char ip_udp[33];
+	in_addr ip_udp;
 	uint16_t port_udp;
-	UDP_packet pkt;
+	char topic[51];
+	DATA_TYPE data_type;
+	int payload_len;
 };
-
-#define MAX_TCP_MESSAGE (max(sizeof(TCP_notification), sizeof(TCP_subscription)))
 
 /**
  * DIE = Custom macro for error-checking

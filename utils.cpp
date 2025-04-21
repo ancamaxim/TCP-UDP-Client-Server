@@ -12,7 +12,7 @@ int recv_all(int sockfd, void *buffer, size_t len)
 		if (rc > 0) {
 			bytes_received += rc;
 			bytes_remaining -= rc;
-		} else if (rc == 0) {
+		} else if (rc <= 0) {
 			break;
 		}
 	}
@@ -40,8 +40,7 @@ int send_all(int sockfd, void *buffer, size_t len)
 
 const char *data_type_to_string(DATA_TYPE type)
 {
-	switch (type)
-	{
+	switch (type) {
 	case INT:
 		return "INT";
 	case SHORT_REAL:

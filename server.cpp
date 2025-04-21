@@ -9,6 +9,8 @@ unordered_map<int, client> sock_id_map;
 vector<int> is_active;
 
 void close_client(pollfd *poll_fds, int i) {
+	if (i > 2)
+		printf("Client %s disconnected.\n", sock_id_map[poll_fds[i].fd].id.c_str());
 	shutdown(poll_fds[i].fd, SHUT_RDWR);
 	close(poll_fds[i].fd);
 	database[sock_id_map[poll_fds[i].fd].id].is_active = 0;
@@ -18,7 +20,8 @@ void close_client(pollfd *poll_fds, int i) {
 
 void close_all_connections(pollfd *poll_fds, int num_sockets) {
     for (int i = 1; i < num_sockets; ++i)
-		close_client(poll_fds, i);
+		if (is_active[i])
+			close_client(poll_fds, i);
 }
 
 bool match_topic(vector<string> s, vector<string> p) {
@@ -31,7 +34,7 @@ bool match_topic(vector<string> s, vector<string> p) {
 			if (s[i - 1] == p[j - 1] || p[j - 1] == "+")
 				dp[i][j] = dp[i - 1][j - 1];
 			else if(p[j - 1] == "*")
-				dp[i][j] = dp[i - 1][j];
+				dp[i][j] = dp[i - 1][j] || dp[i - 1][j - 1];
 	return dp[n][m];
 }
 
@@ -61,24 +64,56 @@ vector<string> split(const string& text, char delim) {
 }
 
 void announce_clients(UDP_packet udp_pkt, sockaddr_in addr) {
+	vector<string> topic = split(udp_pkt.topic, '/');
+
 	for (const auto& [sockfd, client] : sock_id_map) {
 		for (const auto& [sub, active] : client.subs) {
 			if (!active)
 				continue;
-			bool match = match_topic(split(sub, '/'), split(udp_pkt.topic, '/'));
+			bool match = match_topic(topic, split(sub, '/'));
 
 			if (match) {
 				TCP_notification tcp_notif;
 
-				strcpy(tcp_notif.ip_udp, inet_ntoa(addr.sin_addr));
+				tcp_notif.ip_udp = addr.sin_addr;
 				tcp_notif.port_udp = ntohs(addr.sin_port);
-				tcp_notif.pkt = udp_pkt;
+				memcpy(tcp_notif.topic, udp_pkt.topic, 51);
+				tcp_notif.data_type = udp_pkt.data_type;
 
+				switch (udp_pkt.data_type) {
+				case INT:
+					tcp_notif.payload_len = 5;
+					break;
+				case SHORT_REAL:
+					tcp_notif.payload_len = 2;
+					break;
+				case FLOAT:
+					tcp_notif.payload_len = 6;
+					break;
+				case STRING:
+					tcp_notif.payload_len = 1 + strlen(udp_pkt.payload);
+					break;
+				default:
+					tcp_notif.payload_len = 0;
+					break;
+				}
 				int rc = send_all(sockfd, &tcp_notif, sizeof(tcp_notif));
+				DIE(rc < 0, "send");
+
+				rc = send_all(sockfd, udp_pkt.payload, tcp_notif.payload_len);
 				DIE(rc < 0, "send");
 			}
 		}
 	}
+}
+
+void parse_udp_pkt(UDP_packet *udp_pkt, char *buf) {
+	memset(udp_pkt, 0, sizeof(*udp_pkt));
+	memcpy(udp_pkt->topic, buf, 50);
+	udp_pkt->topic[50] = '\0';
+	memcpy(&(udp_pkt->data_type), buf + 50, 1);
+	memcpy(udp_pkt->payload, buf + 51, 1500);
+	udp_pkt->payload[1500] = '\0';
 }
 
 void run_server(int listenTCP, int sock_UDP) {
@@ -86,13 +121,14 @@ void run_server(int listenTCP, int sock_UDP) {
     TCP_notification tcp_notif;
     UDP_packet udp_pkt;
 
-    char buf[MAX_TCP_MESSAGE];
-    int num_sockets = 3, MAX_CONNECTIONS = 33, rc;
+    char buf[sizeof(UDP_packet)];
+    int num_sockets = 3, MAX_CONNECTIONS = 103, rc;
     pollfd *poll_fds;
 
-	memset(buf, 0, MAX_TCP_MESSAGE);
+	memset(buf, 0, sizeof(UDP_packet));
     memset(&tcp_sub, 0, sizeof(tcp_sub));
     memset(&tcp_notif, 0, sizeof(tcp_notif));
+	memset(&udp_pkt, 0, sizeof(udp_pkt));
 
     poll_fds = (pollfd *) calloc(MAX_CONNECTIONS, sizeof(pollfd));
     DIE(poll_fds == NULL, "calloc() failed");
@@ -103,7 +139,7 @@ void run_server(int listenTCP, int sock_UDP) {
 	is_active.resize(MAX_CONNECTIONS);
 
     poll_fds[0].fd = 0;
-    poll_fds[0].fd = POLLIN;
+    poll_fds[0].events = POLLIN;
     poll_fds[1].fd = sock_UDP;
     poll_fds[1].events = POLLIN;
     poll_fds[2].fd = listenTCP;
@@ -118,6 +154,17 @@ void run_server(int listenTCP, int sock_UDP) {
 		for (int i = 0; i < num_sockets; i++) {
 			if (!(poll_fds[i].revents & POLLIN) || !is_active[i])
 				continue;
+			if (num_sockets == MAX_CONNECTIONS) {
+				MAX_CONNECTIONS *= 2;
+
+				poll_fds = (pollfd *) realloc(poll_fds, MAX_CONNECTIONS * sizeof(pollfd));
+				DIE(poll_fds == NULL, "calloc() failed");
+
+				rc = listen(listenTCP, MAX_CONNECTIONS);
+				DIE(rc < 0, "listen");
+
+				is_active.resize(MAX_CONNECTIONS);
+			}
 			if (poll_fds[i].fd == listenTCP) {
 				/* Accept new connection */
 				sockaddr_in cli_addr;
@@ -143,10 +190,15 @@ void run_server(int listenTCP, int sock_UDP) {
                     database[id] = sock_id_map[newsockfd] = client(id, newsockfd, 1);
 					printf("New client %s connected from %s:%d.\n", buf,
 							inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
+
+					/* Send ACK */
+					buf[0] = 1;
+					rc = send_all(newsockfd, buf, 1);
+                	DIE(rc < 0, "send");
 				} else {
 					client& c = database[id];
 
-					if (!c.is_active) {
+					if (c.is_active == 0) {
 						/* Client has been registered before, but is not active */
 						c.is_active = 1;
 						sock_id_map.erase(c.sockfd);
@@ -160,12 +212,17 @@ void run_server(int listenTCP, int sock_UDP) {
 
 						printf("New client %s connected from %s:%d.\n", buf,
 							inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
+
+						/* Send ACK */
+						buf[0] = 1;
+						rc = send_all(newsockfd, buf, 1);
+						DIE(rc < 0, "send");
 					} else {
 						/* Client already exists in database, send error */
 						printf("Client %s already connected.\n", buf);
 
-						memset(buf, 0, MAX_TCP_MESSAGE);
-						int rc = send_all(newsockfd, buf, sizeof(tcp_notif));
+						memset(buf, 0, sizeof(UDP_packet));
+						int rc = send_all(newsockfd, buf, 1);
 						DIE(rc < 0, "send() error");
 
 						shutdown(newsockfd, SHUT_RDWR);
@@ -174,19 +231,23 @@ void run_server(int listenTCP, int sock_UDP) {
 				}
             } else if (poll_fds[i].fd == sock_UDP) {
 				/* Received UDP notification */
+				memset(buf, 0, sizeof(udp_pkt));
+
 				sockaddr_in from;
-				socklen_t addrlen;
-				int rc = recvfrom(sock_UDP, &udp_pkt, sizeof(udp_pkt), 0,
+				socklen_t addrlen = 0;
+				int rc = recvfrom(sock_UDP, &buf, sizeof(udp_pkt), 0,
 							(sockaddr *) &from, &addrlen);
 				DIE(rc < 0, "recvfrom");
 
+				parse_udp_pkt(&udp_pkt, buf);
 				/* Process notification */
 				announce_clients(udp_pkt, from);
             } else if (poll_fds[i].fd == 0) {
                 /* In case of exit command, close all connections + server */
                 fgets(buf, sizeof(buf), stdin);
 
-                if (!strcmp(buf, "exit\n")) {
+				buf[strlen(buf) - 1] = '\0';
+                if (!strcmp(buf, "exit")) {
                     close_all_connections(poll_fds, num_sockets);
 					free(poll_fds);
 					exit(0);
@@ -196,9 +257,7 @@ void run_server(int listenTCP, int sock_UDP) {
 				int rc = recv_all(poll_fds[i].fd, &tcp_sub, sizeof(tcp_sub));
 				DIE(rc < 0, "recv");
 
-				if (rc == 0) {
-					printf("Client %s disconnected.\n", sock_id_map[poll_fds[i].fd].id.c_str());
-                    
+				if (rc == 0) {                    
                     /* Delete socket */
 					close_client(poll_fds, i);
 				} else {
@@ -212,8 +271,7 @@ void run_server(int listenTCP, int sock_UDP) {
 
 int main(int argc, char *argv[])
 {
-	if (argc != 2)
-	{
+	if (argc != 2) {
 		printf("\n Usage: %s <port>\n", argv[0]);
 		return 1;
 	}
