@@ -9,8 +9,10 @@ unordered_map<int, client> sock_id_map;
 vector<int> is_active;
 
 void close_client(pollfd *poll_fds, int i) {
+	/* First 3 connections are stdin, listenTCP and sockUDP */
 	if (i > 2)
 		printf("Client %s disconnected.\n", sock_id_map[poll_fds[i].fd].id.c_str());
+
 	shutdown(poll_fds[i].fd, SHUT_RDWR);
 	close(poll_fds[i].fd);
 	database[sock_id_map[poll_fds[i].fd].id].is_active = 0;
@@ -38,20 +40,6 @@ bool match_topic(vector<string> s, vector<string> p) {
 	return dp[n][m];
 }
 
-void handle_subscription(TCP_subscription tcp_sub, int sockfd) {
-	client& c = sock_id_map[sockfd];
-	string topic = string(tcp_sub.topic);
-
-	if (tcp_sub.subscribe == 1) {
-		/* Register subscription for corresponding client */
-		c.subs[topic] = true;
-	} else {
-		/* Unsubscribe if topic exists */
-		if (c.subs.find(topic) != c.subs.end())
-			c.subs[topic] = false;
-	}
-}
-
 vector<string> split(const string& text, char delim) {
 	vector<string> res;
 	stringstream ss(text);
@@ -63,10 +51,42 @@ vector<string> split(const string& text, char delim) {
 	return res;
 }
 
+void handle_subscription(TCP_subscription tcp_sub, int sockfd) {
+	client& c = sock_id_map[sockfd];
+	string topic = string(tcp_sub.topic);
+	vector<string> topic_vector = split(topic, '/');
+
+	if (tcp_sub.subscribe == 1) {
+		/* Register subscription for corresponding client */
+		c.subs[topic] = true;
+	} else {
+		/* Unsubscribe if topic exists */
+		if (c.subs.find(topic) != c.subs.end()) {
+			c.subs.erase(topic);
+		}
+
+		/* All those subscriptions which match, will be deactivated */
+		for (const auto& [sub, active] : c.subs) {
+			if (!active)
+				continue;
+			bool match = match_topic(split(sub, '/'), topic_vector) ||
+						match_topic(topic_vector, split(sub, '/'));
+			if (match)
+				c.subs[sub] = false;
+		}
+	}
+
+	database[c.id] = c;
+}
+
 void announce_clients(UDP_packet udp_pkt, sockaddr_in addr) {
 	vector<string> topic = split(udp_pkt.topic, '/');
 
 	for (const auto& [sockfd, client] : sock_id_map) {
+		if (!client.is_active)
+			continue;
+
+		/* Search for subscriptions that might match */
 		for (const auto& [sub, active] : client.subs) {
 			if (!active)
 				continue;
@@ -97,11 +117,14 @@ void announce_clients(UDP_packet udp_pkt, sockaddr_in addr) {
 					tcp_notif.payload_len = 0;
 					break;
 				}
+				/* Send TCP notification */
 				int rc = send_all(sockfd, &tcp_notif, sizeof(tcp_notif));
 				DIE(rc < 0, "send");
 
 				rc = send_all(sockfd, udp_pkt.payload, tcp_notif.payload_len);
 				DIE(rc < 0, "send");
+
+				return;
 			}
 		}
 	}
@@ -169,6 +192,7 @@ void run_server(int listenTCP, int sock_UDP) {
 				/* Accept new connection */
 				sockaddr_in cli_addr;
 				socklen_t cli_len = sizeof(cli_addr);
+				memset(&cli_addr, 0, sizeof(cli_addr));
 				const int newsockfd = accept(listenTCP, 
                                 (sockaddr *)&cli_addr, &cli_len);
 				DIE(newsockfd < 0, "accept");
@@ -187,7 +211,9 @@ void run_server(int listenTCP, int sock_UDP) {
 					num_sockets++;
 
 					/* Register client into database */
-                    database[id] = sock_id_map[newsockfd] = client(id, newsockfd, 1);
+					client c = client(id, newsockfd, 1);
+                    database.emplace(id, c);
+					sock_id_map.emplace(newsockfd, c);
 					printf("New client %s connected from %s:%d.\n", buf,
 							inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
 
@@ -196,21 +222,20 @@ void run_server(int listenTCP, int sock_UDP) {
 					rc = send_all(newsockfd, buf, 1);
                 	DIE(rc < 0, "send");
 				} else {
-					client& c = database[id];
+					client& c = database.at(id);
 
 					if (c.is_active == 0) {
 						/* Client has been registered before, but is not active */
 						c.is_active = 1;
-						sock_id_map.erase(c.sockfd);
 						c.sockfd = newsockfd;
-						sock_id_map[newsockfd] = c;
+						sock_id_map.emplace(newsockfd, c);
 						
 						poll_fds[num_sockets].fd = newsockfd;
 						poll_fds[num_sockets].events = POLLIN;
 						is_active[num_sockets] = 1;
 						num_sockets++;
 
-						printf("New client %s connected from %s:%d.\n", buf,
+						printf("New client %s connected from %s:%d (reconnect).\n", buf,
 							inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
 
 						/* Send ACK */
@@ -234,13 +259,14 @@ void run_server(int listenTCP, int sock_UDP) {
 				memset(buf, 0, sizeof(udp_pkt));
 
 				sockaddr_in from;
-				socklen_t addrlen = 0;
+				socklen_t addrlen = sizeof(from);
+				memset(&from, 0, sizeof(from));
 				int rc = recvfrom(sock_UDP, &buf, sizeof(udp_pkt), 0,
 							(sockaddr *) &from, &addrlen);
 				DIE(rc < 0, "recvfrom");
 
-				parse_udp_pkt(&udp_pkt, buf);
 				/* Process notification */
+				parse_udp_pkt(&udp_pkt, buf);
 				announce_clients(udp_pkt, from);
             } else if (poll_fds[i].fd == 0) {
                 /* In case of exit command, close all connections + server */

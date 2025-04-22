@@ -2,8 +2,7 @@
 
 using namespace std;
 
-
-void parse_tcp(TCP_subscription *tcp_pkt, char *buf) { 
+void parse_tcp(TCP_subscription *tcp_pkt, char *buf) {
     char *sub = strtok(buf, " ");
     if (!sub)
         exit(-1);
@@ -12,13 +11,10 @@ void parse_tcp(TCP_subscription *tcp_pkt, char *buf) {
         exit(-1);
 
     strcpy(tcp_pkt->topic, topic);
-    if (!strcmp(sub, "subscribe")) {
+    if (!strcmp(sub, "subscribe"))
         tcp_pkt->subscribe = 1;
-        printf("Subscribed to topic %s.\n", topic);
-    } else if (!strcmp(sub, "unsubscribe")) {
+    else if (!strcmp(sub, "unsubscribe"))
         tcp_pkt->subscribe = 0;
-        printf("Unsubscribed to topic %s.\n", topic);
-    }
 }
 
 void print_notification(TCP_notification tcp_notif, char *ip_udp, char *payload) {
@@ -83,16 +79,24 @@ void run_client(int sockfd)
 		
         /* Subscribe / Unsubscribe message */
 		if (poll_fds[0].revents & POLLIN) {
-			fgets(buf, sizeof(buf), stdin);
+			fgets(buf, 70, stdin);
             buf[strlen(buf) - 1] = '\0';
-			
+
             if (!strcmp(buf, "exit")) {
                 shutdown(sockfd, SHUT_RDWR);
                 close(sockfd);
                 exit(0);
             }
             parse_tcp(&tcp_sub, buf);
-			send_all(sockfd, &tcp_sub, sizeof(tcp_sub));
+
+			rc = send_all(sockfd, &tcp_sub, sizeof(tcp_sub));
+            DIE(rc < 0, "send()");
+
+            if (tcp_sub.subscribe)
+                printf("Subscribed to topic %s.\n", tcp_sub.topic);
+            else
+                printf("Unsubscribed from topic %s.\n", tcp_sub.topic);
+
 		} else if (poll_fds[1].revents & POLLIN) {
 			/* Receive notification from server */
 			int rc = recv_all(sockfd, &tcp_notif, sizeof(tcp_notif));
@@ -113,6 +117,7 @@ void run_client(int sockfd)
 
             ip_udp = strdup(inet_ntoa(tcp_notif.ip_udp));
             print_notification(tcp_notif, ip_udp, payload);
+            free(ip_udp);
 		}
 	}
 
@@ -134,9 +139,20 @@ int main(int argc, char *argv[])
 	/* TCP send socket */
 	const int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	DIE(sockfd < 0, "socket");
-
-	struct sockaddr_in serv_addr;
-	socklen_t socket_len = sizeof(struct sockaddr_in);
+    
+    /* Make address reusable */
+	const int enable = 1;
+	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0) {
+        perror("setsockopt(SO_REUSEADDR) failed");
+	}
+	
+	/* Disable Nagel's algorithm */
+	if (setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(int)) < 0) {
+        perror("setsockopt(TCP_NODELAY) failed");
+	}
+    
+    struct sockaddr_in serv_addr;
+    socklen_t socket_len = sizeof(struct sockaddr_in);
 
 	memset(&serv_addr, 0, socket_len);
 	serv_addr.sin_family = AF_INET;
@@ -154,6 +170,7 @@ int main(int argc, char *argv[])
     rc = send_all(sockfd, buf, 11);
     DIE(rc < 0, "send client_id failed");
 
+    /* Receive ACK */
     rc = recv_all(sockfd, buf, 1);
     DIE(rc < 0, "recv()");
 

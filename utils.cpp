@@ -9,12 +9,12 @@ int recv_all(int sockfd, void *buffer, size_t len)
 	while (bytes_remaining > 0)
 	{
 		int rc = recv(sockfd, buff + bytes_received, bytes_remaining, 0);
-		if (rc > 0) {
-			bytes_received += rc;
-			bytes_remaining -= rc;
-		} else if (rc <= 0) {
+		DIE(rc < 0, "recv");
+
+		if (rc == 0)
 			break;
-		}
+		bytes_received += rc;
+		bytes_remaining -= rc;
 	}
 	return bytes_received;
 }
@@ -27,12 +27,10 @@ int send_all(int sockfd, void *buffer, size_t len)
 
 	while (bytes_remaining > 0) {
 		int rc = send(sockfd, buff + bytes_sent, bytes_remaining, 0);
-		if (rc > 0) {
-			bytes_sent += rc;
-			bytes_remaining -= rc;
-		} else if (rc == 0) {
-			break;
-		}
+		DIE(rc < 0, "send");
+
+		bytes_sent += rc;
+		bytes_remaining -= rc;
 	}
 
 	return bytes_sent;
