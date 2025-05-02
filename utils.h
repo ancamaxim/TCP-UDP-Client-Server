@@ -87,6 +87,14 @@ int send_all(int sockfd, void *buff, size_t len);
  */
 int recv_all(int sockfd, void *buff, size_t len);
 
+/**
+ * data_type_to_string = converts DATA_TYPE enum to string
+ *
+ * @param type: enum variable
+ *
+ * @brief The function is used to return the name of the data type that the
+ * enum DATA_TYPE hints to.
+ */
 const char* data_type_to_string(DATA_TYPE type);
 
 #endif

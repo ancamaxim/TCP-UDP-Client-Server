@@ -165,6 +165,7 @@ int main(int argc, char *argv[])
 
     char buf[11];
 
+    /* Send client id first */
     memset(buf, 0, 11);
     strcpy(buf, argv[1]);
     rc = send_all(sockfd, buf, 11);
