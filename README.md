@@ -1,6 +1,6 @@
 # README
 
-Client-server application for TCP and UDP message sending and handling.
+Client-server application for TCP and UDP message sending and handling implemented in C++.
 
 This application consists of 2 main files:
 
