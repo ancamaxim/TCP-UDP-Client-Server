@@ -1,4 +1,4 @@
-## README MAXIM ANCA-STEFANIA, 324CC ##
+# README
 
 Client-server application for TCP and UDP message sending and handling.
 
